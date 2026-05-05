@@ -75,6 +75,10 @@ function App() {
   const [round, setRound] = useState(1);
   const [running, setRunning] = useState(false);
   const intervalRef = useRef(null);
+  const phaseRef = useRef(phase);
+  const workDurationRef = useRef(workDuration);
+  phaseRef.current = phase;
+  workDurationRef.current = workDuration;
   const { warningBeep, transitionBeep } = useAudio();
 
   const isActive = phase !== PHASES.IDLE;
@@ -103,6 +107,9 @@ function App() {
     intervalRef.current = setInterval(() => {
       setTimeLeft((prev) => {
         const next = prev - 1;
+        if (phaseRef.current === PHASES.WORK && next === Math.floor(workDurationRef.current / 2)) {
+          warningBeep();
+        }
         if (next > 0 && next <= 3) warningBeep();
         if (next <= 0) {
           advancePhase();
