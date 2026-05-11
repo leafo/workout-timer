@@ -21,8 +21,10 @@ function useAudio() {
     return ctxRef.current;
   }, []);
 
-  const beep = useCallback((freq, duration) => {
+  const beep = useCallback((freq, duration, when) => {
     const ctx = getCtx();
+    const start = when ?? ctx.currentTime;
+
     const fundamental = ctx.createOscillator();
     const overtone = ctx.createOscillator();
     const fundamentalGain = ctx.createGain();
@@ -49,26 +51,54 @@ function useAudio() {
     compressor.connect(ctx.destination);
 
     // Bell-like envelope: fast attack, exponential decay.
-    const now = ctx.currentTime;
     const tail = Math.max(duration, 0.25);
     const attack = 0.005;
-    fundamentalGain.gain.setValueAtTime(0, now);
-    fundamentalGain.gain.linearRampToValueAtTime(0.9, now + attack);
-    fundamentalGain.gain.exponentialRampToValueAtTime(0.001, now + tail);
-    overtoneGain.gain.setValueAtTime(0, now);
-    overtoneGain.gain.linearRampToValueAtTime(0.2, now + attack);
-    overtoneGain.gain.exponentialRampToValueAtTime(0.001, now + tail);
+    fundamentalGain.gain.setValueAtTime(0, start);
+    fundamentalGain.gain.linearRampToValueAtTime(0.9, start + attack);
+    fundamentalGain.gain.exponentialRampToValueAtTime(0.001, start + tail);
+    overtoneGain.gain.setValueAtTime(0, start);
+    overtoneGain.gain.linearRampToValueAtTime(0.2, start + attack);
+    overtoneGain.gain.exponentialRampToValueAtTime(0.001, start + tail);
 
-    fundamental.start(now);
-    overtone.start(now);
-    fundamental.stop(now + tail);
-    overtone.stop(now + tail);
+    fundamental.start(start);
+    overtone.start(start);
+    fundamental.stop(start + tail);
+    overtone.stop(start + tail);
+  }, [getCtx]);
+
+  // Call from a user gesture (e.g. Start button) so the AudioContext is
+  // resumed and the audio graph is compiled well before the first real beep.
+  // Without this, the first beep after page load is often clipped.
+  const prime = useCallback(() => {
+    const ctx = getCtx();
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    gain.gain.value = 0.0001;
+    osc.start(ctx.currentTime);
+    osc.stop(ctx.currentTime + 0.01);
   }, [getCtx]);
 
   const warningBeep = useCallback(() => beep(440, 0.1), [beep]);
-  const transitionBeep = useCallback(() => beep(880, 0.3), [beep]);
 
-  return { warningBeep, transitionBeep };
+  // Rising fifth → entering work (energizing).
+  const workStartBeep = useCallback(() => {
+    const ctx = getCtx();
+    const now = ctx.currentTime;
+    beep(660, 0.15, now);
+    beep(880, 0.3, now + 0.15);
+  }, [beep, getCtx]);
+
+  // Falling fifth → entering rest (relaxing).
+  const restStartBeep = useCallback(() => {
+    const ctx = getCtx();
+    const now = ctx.currentTime;
+    beep(880, 0.15, now);
+    beep(660, 0.3, now + 0.15);
+  }, [beep, getCtx]);
+
+  return { warningBeep, workStartBeep, restStartBeep };
 }
 
 function useWakeLock(active) {
@@ -148,25 +178,27 @@ function App() {
   const workDurationRef = useRef(workDuration);
   phaseRef.current = phase;
   workDurationRef.current = workDuration;
-  const { warningBeep, transitionBeep } = useAudio();
+  const { prime, warningBeep, workStartBeep, restStartBeep } = useAudio();
 
   const isActive = phase !== PHASES.IDLE;
   useWakeLock(running);
 
   const advancePhase = useCallback(() => {
-    transitionBeep();
     if (phase === PHASES.PREP) {
+      workStartBeep();
       setPhase(PHASES.WORK);
       setTimeLeft(workDuration);
     } else if (phase === PHASES.WORK) {
+      restStartBeep();
       setPhase(PHASES.REST);
       setTimeLeft(restDuration);
     } else if (phase === PHASES.REST) {
+      workStartBeep();
       setRound((r) => r + 1);
       setPhase(PHASES.WORK);
       setTimeLeft(workDuration);
     }
-  }, [phase, workDuration, restDuration, transitionBeep]);
+  }, [phase, workDuration, restDuration, workStartBeep, restStartBeep]);
 
   useEffect(() => {
     if (!running) {
@@ -193,6 +225,7 @@ function App() {
   }, [running, advancePhase, warningBeep]);
 
   const handleStart = () => {
+    prime();
     setPhase(PHASES.PREP);
     setTimeLeft(PREP_DURATION);
     setRound(1);
