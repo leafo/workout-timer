@@ -23,19 +23,46 @@ function useAudio() {
 
   const beep = useCallback((freq, duration) => {
     const ctx = getCtx();
-    const osc = ctx.createOscillator();
-    const filter = ctx.createBiquadFilter();
-    const gain = ctx.createGain();
-    filter.type = "lowpass";
-    filter.frequency.value = 800;
-    osc.connect(filter);
-    filter.connect(gain);
-    gain.connect(ctx.destination);
-    osc.frequency.value = freq;
-    osc.type = "square";
-    gain.gain.value = 0.15;
-    osc.start(ctx.currentTime);
-    osc.stop(ctx.currentTime + duration);
+    const fundamental = ctx.createOscillator();
+    const overtone = ctx.createOscillator();
+    const fundamentalGain = ctx.createGain();
+    const overtoneGain = ctx.createGain();
+    const compressor = ctx.createDynamicsCompressor();
+
+    // Acts as a limiter: raises perceived loudness so beeps cut through music.
+    compressor.threshold.value = -18;
+    compressor.knee.value = 0;
+    compressor.ratio.value = 20;
+    compressor.attack.value = 0;
+    compressor.release.value = 0.1;
+
+    fundamental.type = "sine";
+    fundamental.frequency.value = freq;
+    fundamental.connect(fundamentalGain);
+    fundamentalGain.connect(compressor);
+
+    overtone.type = "sine";
+    overtone.frequency.value = freq * 2;
+    overtone.connect(overtoneGain);
+    overtoneGain.connect(compressor);
+
+    compressor.connect(ctx.destination);
+
+    // Bell-like envelope: fast attack, exponential decay.
+    const now = ctx.currentTime;
+    const tail = Math.max(duration, 0.25);
+    const attack = 0.005;
+    fundamentalGain.gain.setValueAtTime(0, now);
+    fundamentalGain.gain.linearRampToValueAtTime(0.9, now + attack);
+    fundamentalGain.gain.exponentialRampToValueAtTime(0.001, now + tail);
+    overtoneGain.gain.setValueAtTime(0, now);
+    overtoneGain.gain.linearRampToValueAtTime(0.2, now + attack);
+    overtoneGain.gain.exponentialRampToValueAtTime(0.001, now + tail);
+
+    fundamental.start(now);
+    overtone.start(now);
+    fundamental.stop(now + tail);
+    overtone.stop(now + tail);
   }, [getCtx]);
 
   const warningBeep = useCallback(() => beep(440, 0.1), [beep]);
