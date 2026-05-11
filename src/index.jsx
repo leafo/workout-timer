@@ -71,6 +71,48 @@ function useAudio() {
   return { warningBeep, transitionBeep };
 }
 
+function useWakeLock(active) {
+  useEffect(() => {
+    if (!active) return;
+    if (!("wakeLock" in navigator)) return;
+
+    let lock = null;
+    let cancelled = false;
+
+    const request = async () => {
+      try {
+        const l = await navigator.wakeLock.request("screen");
+        if (cancelled) {
+          l.release();
+          return;
+        }
+        lock = l;
+        l.addEventListener("release", () => {
+          if (lock === l) lock = null;
+        });
+      } catch {
+        // permission denied or unsupported state — ignore
+      }
+    };
+
+    request();
+
+    const onVisibility = () => {
+      if (document.visibilityState === "visible" && !lock) request();
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+
+    return () => {
+      cancelled = true;
+      document.removeEventListener("visibilitychange", onVisibility);
+      if (lock) {
+        lock.release();
+        lock = null;
+      }
+    };
+  }, [active]);
+}
+
 function formatTime(seconds) {
   const m = Math.floor(seconds / 60);
   const s = seconds % 60;
@@ -109,6 +151,7 @@ function App() {
   const { warningBeep, transitionBeep } = useAudio();
 
   const isActive = phase !== PHASES.IDLE;
+  useWakeLock(running);
 
   const advancePhase = useCallback(() => {
     transitionBeep();
